@@ -1,0 +1,14 @@
+name = "koolbase-cdn-worker"
+main = "src/worker.ts"
+compatibility_date = "2026-06-04"
+
+# Route binding — only intercepts /p/* paths on cdn.koolbase.com. Direct R2
+# fetches and /cdn-cgi/image/ URLs bypass this Worker entirely.
+routes = [
+  { pattern = "cdn.koolbase.com/p/*", zone_name = "koolbase.com" }
+]
+
+# Same KV namespace the Go API writes to (Doppler CF_KV_NAMESPACE_ID).
+[[kv_namespaces]]
+binding = "PRESETS"
+id = "b8833ad18353443e958e37ad476ac35c"
