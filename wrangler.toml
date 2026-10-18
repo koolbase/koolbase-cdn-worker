@@ -5,10 +5,29 @@ compatibility_date = "2026-06-04"
 # Route binding — only intercepts /p/* paths on cdn.koolbase.com. Direct R2
 # fetches and /cdn-cgi/image/ URLs bypass this Worker entirely.
 routes = [
-  { pattern = "cdn.koolbase.com/p/*", zone_name = "koolbase.com" }
+  { pattern = "cdn.koolbase.com/p/*", zone_name = "koolbase.com" },
+  # A private bucket's file in a preset (#146): signed by the API.
+  { pattern = "cdn.koolbase.com/s/*", zone_name = "koolbase.com" }
 ]
 
 # Same KV namespace the Go API writes to (Doppler CF_KV_NAMESPACE_ID).
 [[kv_namespaces]]
 binding = "PRESETS"
 id = "b8833ad18353443e958e37ad476ac35c"
+
+# Where /s/ reads a private bucket's files (#146): the private store, and
+# the public one while a newly private bucket's files are still moving.
+[[r2_buckets]]
+binding = "PRIVATE_FILES"
+bucket_name = "koolbase-storage"
+
+[[r2_buckets]]
+binding = "PUBLIC_FILES"
+bucket_name = "koolbase-storage-public"
+
+# What sizes them: Cloudflare's Images binding.
+[images]
+binding = "IMAGES"
+
+# PRESET_SIGNING_KEY: a secret (npx wrangler secret put PRESET_SIGNING_KEY),
+# the same value as the API's -- never in this file.

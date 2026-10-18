@@ -13,7 +13,9 @@
 // Other paths on cdn.koolbase.com (raw R2 fetches, direct /cdn-cgi/image/
 // calls) bypass this Worker entirely — the route binding scopes it to /p/*.
 
-export interface Env {
+import { serveSigned, type SignedEnv, type StoredOptions as SignedOptions } from './signed';
+
+export interface Env extends SignedEnv {
   PRESETS: KVNamespace;
 }
 
@@ -43,6 +45,11 @@ export default {
     // A browser's preflight: answered here, never looked up.
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+    // A private bucket's file in a preset (#146): a signed address.
+    if (new URL(request.url).pathname.startsWith('/s/')) {
+      const out = await serveSigned(request, env, (projectId, preset) => loadPreset(env, projectId, preset));
+      return withCors(out instanceof Response ? out : jsonError(out.status, out.code, out.message));
     }
     return withCors(await resolve(request, env));
   },
@@ -94,26 +101,11 @@ async function resolve(request: Request, env: Env): Promise<Response> {
     );
   }
 
-  const kvKey = `preset:${projectId}:${presetName}`;
-  const stored = await env.PRESETS.get(kvKey);
-  if (stored === null) {
-    return jsonError(
-      404,
-      'preset_not_found',
-      `no preset named '${presetName}' in project ${projectId}`,
-    );
+  const loaded = await loadPreset(env, projectId, presetName);
+  if ('status' in loaded && 'code' in loaded) {
+    return jsonError(loaded.status as number, loaded.code as string, loaded.message as string);
   }
-
-  let opts: StoredOptions;
-  try {
-    opts = JSON.parse(stored) as StoredOptions;
-  } catch {
-    return jsonError(
-      500,
-      'preset_corrupted',
-      'preset data in KV is not valid JSON; re-save the preset from the dashboard',
-    );
-  }
+  const opts = loaded as StoredOptions;
 
   // Build the cf.image options object, allowlist-filtered. Workers must
   // use `cf.image` for in-Worker transforms because the /cdn-cgi/image/
@@ -149,6 +141,41 @@ async function resolve(request: Request, env: Env): Promise<Response> {
 }
 
 // --- helpers --------------------------------------------------------------
+
+/** A project's preset by name, from KV; or why there is none. */
+async function loadPreset(
+  env: Env,
+  projectId: string,
+  presetName: string,
+): Promise<StoredOptions | { status: number; code: string; message: string }> {
+  if (!UUID_RE.test(projectId)) {
+    return { status: 400, code: 'invalid_project_id', message: 'project_id must be a UUID' };
+  }
+  if (!PRESET_NAME_RE.test(presetName)) {
+    return {
+      status: 400,
+      code: 'invalid_preset_name',
+      message: 'preset name must be lowercase alphanumeric with _ or -, 1-64 chars',
+    };
+  }
+  const stored = await env.PRESETS.get(`preset:${projectId}:${presetName}`);
+  if (stored === null) {
+    return {
+      status: 404,
+      code: 'preset_not_found',
+      message: `no preset named '${presetName}' in project ${projectId}`,
+    };
+  }
+  try {
+    return JSON.parse(stored) as StoredOptions & SignedOptions;
+  } catch {
+    return {
+      status: 500,
+      code: 'preset_corrupted',
+      message: 'preset data in KV is not valid JSON; re-save the preset from the dashboard',
+    };
+  }
+}
 
 function jsonError(status: number, code: string, message: string): Response {
   return new Response(JSON.stringify({ code, message }), {
